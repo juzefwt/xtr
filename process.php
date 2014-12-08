@@ -2,13 +2,7 @@
 
 $subject = isset($argv[1]) ? $argv[1] : null;
 
-if (is_file($subject)) {
-    $files = array($subject);
-
-    process(realpath(dirname($subject)), $files);
-} elseif (is_dir($subject)) {
-    $subject = realpath(dirname($subject));
-
+if (is_dir($subject)) {
     if ($handle = opendir($subject)) {
         $files = array();
 
@@ -22,6 +16,10 @@ if (is_file($subject)) {
 
         process($subject, $files);
     }
+} elseif (is_file($subject)) {
+    $files = array($subject);
+
+    process(realpath(dirname($subject)), $files);
 } else {
     throw new RuntimeException('Input not found :(');
 }
@@ -29,7 +27,7 @@ if (is_file($subject)) {
 function process($directory, array $files) {
     $clusterName = strtoupper(basename($directory)).'_CLUSTER';
     $clusterDir = $directory.'/'.$clusterName;
-    
+
     if (is_dir($clusterDir)) {
         rrmdir($clusterDir);
     }
@@ -71,32 +69,14 @@ function process($directory, array $files) {
                         $processedSentence[] = $base;
                     }
 
-                    $originalSentences[$fileName][] = implode(' ', $originalSentence);
-                    $processedSentences[$fileName][] = implode(' ', $processedSentence);
+                    $originalSentences[strtoupper($fileName)][] = implode(' ', $originalSentence);
+                    $processedSentences[strtoupper($fileName)][] = implode(' ', $processedSentence);
                 }
             }
         }
 
-        $docsentTemplate = '<?xml version="1.0" encoding="utf-8"?><!DOCTYPE DOCSENT SYSTEM "/clair/tools/MEAD3/dtd/docsent.dtd"><DOCSENT></DOCSENT>';
-        $docsent = new SimpleXMLElement($docsentTemplate);
-        $docsent->addAttribute('DID', strtoupper($fileName));
-        $docsent->addAttribute('LANG', 'POL');
-        $body = $docsent->addChild('BODY');
-        $text = $body->addChild('TEXT');
-
-        foreach ($processedSentences[$fileName] as $i => $ps) {
-            $snt = $text->addChild('S', $ps);
-            $snt->addAttribute('PAR', 1);
-            $snt->addAttribute('RSNT', $i+1);
-            $snt->addAttribute('SNO', $i+1);
-        }
-
-        $dom = new DOMDocument('1.0', 'utf-8');
-        $dom->preserveWhiteSpace = false;
-        $dom->formatOutput = true;
-        $dom->loadXML($docsent->asXML());
-
-        file_put_contents($clusterDir.'/docsent/'.strtoupper($fileName).'.docsent', $dom->saveXML());
+        writeDocsent($processedSentences, $clusterDir.'/docsent', $fileName);
+        writeDocsent($originalSentences, $clusterDir.'/docsent', $fileName, true);
     }
 
     $clusterConfig = new SimpleXMLElement('<CLUSTER LANG="POL"></CLUSTER>');
@@ -115,14 +95,38 @@ function process($directory, array $files) {
 
     $extractPath = $clusterDir.'/'.$clusterName.'.extract';
 
-    shell_exec('perl -Mutf8 -CS /home/juzef/PWR/MGR/mead/bin/mead.pl -extract -output '.$extractPath.' '.$clusterDir);
+    shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl -extract -output '.$extractPath.' '.$clusterDir);
 
     $extract = new SimpleXMLElement(file_get_contents($extractPath));
     foreach ($extract as $sentence) {
         $doc = $sentence['DID'];
         $sentenceIndex = $sentence['SNO'] - 1;
-        echo $originalSentences[strtolower($doc)][$sentenceIndex].PHP_EOL;
+        echo $originalSentences[strtoupper($doc)][$sentenceIndex].PHP_EOL;
     }
+}
+
+function writeDocsent($sentences, $path, $documentName, $raw = false) {
+    $docsentTemplate = '<?xml version="1.0" encoding="utf-8"?><!DOCTYPE DOCSENT SYSTEM "/clair/tools/MEAD3/dtd/docsent.dtd"><DOCSENT></DOCSENT>';
+    $docsent = new SimpleXMLElement($docsentTemplate);
+    $docsent->addAttribute('DID', strtoupper($documentName));
+    $docsent->addAttribute('LANG', 'POL');
+    $body = $docsent->addChild('BODY');
+    $text = $body->addChild('TEXT');
+
+    foreach ($sentences[$documentName] as $i => $ps) {
+        $snt = $text->addChild('S', $ps);
+        $snt->addAttribute('PAR', 1);
+        $snt->addAttribute('RSNT', $i+1);
+        $snt->addAttribute('SNO', $i+1);
+    }
+
+    $dom = new DOMDocument('1.0', 'utf-8');
+    $dom->preserveWhiteSpace = false;
+    $dom->formatOutput = true;
+    $dom->loadXML($docsent->asXML());
+
+    $fileName = $raw ? strtoupper($documentName.'_raw') : strtoupper($documentName);
+    file_put_contents($path.'/'.$fileName.'.docsent', $dom->saveXML());
 }
 
 function getFileName($file) {

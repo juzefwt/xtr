@@ -1,0 +1,13 @@
+<?php
+
+set_time_limit(0);
+
+$app = require_once __DIR__.'/bootstrap.php';
+
+use Winkiel\Command\CalculateGainCommand;
+
+$application = $app['console'];
+$application->add(new CalculateGainCommand());
+$application->run();
+
+?>

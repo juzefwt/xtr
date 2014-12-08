@@ -1,0 +1,18 @@
+{
+    "autoload": {
+        "psr-0": {
+            "": "src/"
+        }
+    },
+    "require": {
+        "silex/silex": "1.0.*@stable",
+        "doctrine/dbal": "2.2.*",
+        "twig/twig": ">=1.8,<2.0-dev",
+        "symfony/twig-bridge": "2.1.*",
+        "entea/silex-twig-simple-asset-extension": "dev-master",
+	"yosymfony/config-serviceprovider": "1.0.*@dev",
+	"knplabs/console-service-provider": "dev-master",
+	"twitter/bootstrap": "3.0.*@dev"
+    },
+    "minimum-stability": "dev"
+}
