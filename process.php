@@ -75,8 +75,8 @@ function process($directory, array $files) {
             }
         }
 
-        writeDocsent($processedSentences, $clusterDir.'/docsent', $fileName);
-        writeDocsent($originalSentences, $clusterDir.'/docsent', $fileName, true);
+        writeDocsent($processedSentences, $clusterDir.'/docsent', strtoupper($fileName));
+        writeDocsent($originalSentences, $clusterDir.'/docsent', strtoupper($fileName), true);
     }
 
     $clusterConfig = new SimpleXMLElement('<CLUSTER LANG="POL"></CLUSTER>');
