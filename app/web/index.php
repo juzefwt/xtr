@@ -32,6 +32,8 @@ $app->match('/', function(Request $request) use ($app) {
     if ($request->isMethod('POST')) {
         $text = $request->request->get('text');
 
+        $oldmask = umask(0);
+
         $workingDirPath = '/tmp/xtr';
         shell_exec(sprintf('chmod -R 0777 %s', $workingDirPath));
         chown($workingDirPath, 465);
@@ -42,9 +44,11 @@ $app->match('/', function(Request $request) use ($app) {
 
         $clusterDirPath = $workingDirPath.'/TEXT';
 
-        if (!mkdir($clusterDirPath)) {
+        if (!mkdir($clusterDirPath, 0777)) {
             throw new RuntimeException('Cannot create cluster directory');
         }
+
+        umask($oldmask);
 
         $scriptPath = __DIR__.'/../../process.php';
 

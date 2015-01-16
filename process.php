@@ -25,6 +25,8 @@ if (is_dir($subject)) {
 }
 
 function process($directory, array $files) {
+    $oldmask = umask(0);
+
     $clusterName = strtoupper(basename($directory)).'_CLUSTER';
     $clusterDir = $directory.'/'.$clusterName;
 
@@ -43,37 +45,114 @@ function process($directory, array $files) {
         $fileName = getFileName($file);
         $xml = $fileName.'.xml';
 
-        $wcrftCommand = 'wcrft-app nkjp.ini -i text %s/%s -O %s/ccl/%s';
+        $wcrftCommand = 'wcrft-app nkjp.ini -i text -o ccl %s/%s -O %s/ccl/%s';
         shell_exec(sprintf($wcrftCommand, $directory, $file, $clusterDir, $xml));
 
-        $chunkList = new SimpleXMLElement(file_get_contents($clusterDir.'/ccl/'.$xml));
-        foreach ($chunkList as $paragraph) {
+        //NER
+        $linerCommand = "liner2 pipe -i ccl -o ccl -f %s/ccl/%s -t %s/ccl/%s.ner";
+        shell_exec(sprintf($linerCommand, $clusterDir, $xml, $clusterDir, $xml));
+
+        $xmlTemplate = '<?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE chunkList SYSTEM "ccl.dtd">
+        <chunkList>%s</chunkList>';
+
+        $ner = new SimpleXMLElement(sprintf($xmlTemplate, file_get_contents($clusterDir.'/ccl/'.$xml.'.ner')));
+        $namedEntitiesIndexes = array();
+        $tokenIndex = 0;
+
+        foreach ($ner as $paragraph) {
             foreach ($paragraph as $sentence) {
-                foreach ($sentence as $tokUp) {
-                    $originalSentence = array();
-                    $processedSentence = array();
+                foreach ($sentence as $tok) {
+                    $base = (string)$tok->lex->base;
 
-                    foreach ($tokUp as $tok) {
-                        $orth = (string)$tok->orth;
-                        $base = (string)$tok->lex->base;
-
-                        if ((string)$tok->lex->ctag == 'interp') {
-                            continue;
-                        }
-
-                        if (trim($base) == '') {
-                            continue;
-                        }
-
-                        $originalSentence[] = $orth;
-                        $processedSentence[] = $base;
+                    if ((string)$tok->lex->ctag == 'interp') {
+                        continue;
                     }
 
-                    $originalSentences[strtoupper($fileName)][] = implode(' ', $originalSentence);
-                    $processedSentences[strtoupper($fileName)][] = implode(' ', $processedSentence);
+                    if (trim($base) == '') {
+                        continue;
+                    }
+
+                    foreach ($tok->ann as $ann) {
+                        if ((string)$ann == '1') {
+                            $namedEntitiesIndexes[] = $tokenIndex;
+                        }
+                    }
+
+                    $tokenIndex++;
                 }
             }
         }
+
+        $namedEntities = array();
+        $tokenIndex = 0;
+        $chunkList = new SimpleXMLElement(file_get_contents($clusterDir.'/ccl/'.$xml));
+
+        foreach ($chunkList as $paragraph) {
+            foreach ($paragraph as $sentence) {
+                $originalSentence = array();
+                $processedSentence = array();
+
+                foreach ($sentence as $tok) {
+                    $orth = (string)$tok->orth;
+                    $base = (string)$tok->lex->base;
+
+                    if ((string)$tok->lex->ctag == 'interp') {
+                        continue;
+                    }
+
+                    if (trim($base) == '') {
+                        continue;
+                    }
+
+                    if (in_array($tokenIndex, $namedEntitiesIndexes)) {
+                        $namedEntities[] = $base;
+                    }
+
+                    $originalSentence[] = $orth;
+                    $processedSentence[] = $base;
+                    $tokenIndex++;
+                }
+
+                $originalSentences[strtoupper($fileName)][] = implode(' ', $originalSentence);
+                $processedSentences[strtoupper($fileName)][] = implode(' ', $processedSentence);
+            }
+        }
+
+        $ranking = array();
+        foreach ($namedEntities as $n) {
+            if (!isset($ranking[$n])) {
+                $ranking[$n] = 0;
+            }
+
+            $ranking[$n]++;
+        }
+
+        arsort($ranking);
+        $avgFrequency = count($ranking)
+            ? array_sum(array_values($ranking))/count($ranking)
+            : 0;
+
+        $keywordsQuery = array();
+        foreach ($ranking as $entity => $frequency) {
+            if ($frequency > $avgFrequency) {
+                $keywordsQuery[] = sprintf('\b%s\b;%d', $entity, $frequency);
+            }
+        }
+
+        $keywordsConfig = new SimpleXMLElement('<QUERY QID="KF" QNO="1" TRANSLATED="NO"></QUERY>');
+        $keywordsConfig->addChild('TITLE');
+        $keywordsConfig->addChild('NARRATIVE');
+        $keywordsConfig->addChild('DESCRIPTION');
+        $keywordsConfig->addChild('KEYWORDS', implode(';', $keywordsQuery));
+
+        $dom = new DOMDocument('1.0', 'utf-8');
+        $dom->preserveWhiteSpace = false;
+        $dom->formatOutput = true;
+        $dom->loadXML($keywordsConfig->asXML());
+
+        $keywordsConfigPath = $clusterDir.'/'.$clusterName.'.keywords';
+        file_put_contents($keywordsConfigPath, $dom->saveXML());
 
         writeDocsent($processedSentences, $clusterDir.'/docsent', strtoupper($fileName));
         writeDocsent($originalSentences, $clusterDir.'/docsent', strtoupper($fileName), true);
@@ -95,7 +174,11 @@ function process($directory, array $files) {
 
     $extractPath = $clusterDir.'/'.$clusterName.'.extract';
 
-    shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl -extract -output '.$extractPath.' '.$clusterDir);
+    $keywordsParams = '-feature QueryPhraseMatch "/usr/local/share/mead/bin/feature-scripts/keyword/QueryPhraseMatch.pl '.$keywordsConfigPath.' '.$clusterDir.'/docsent"';
+    $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl Centroid 1 Position 1 Length 9 QueryPhraseMatch 1"';
+    shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$keywordsParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
+
+    umask($oldmask);
 
     $extract = new SimpleXMLElement(file_get_contents($extractPath));
     foreach ($extract as $sentence) {
