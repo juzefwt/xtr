@@ -129,14 +129,15 @@ function process($directory, array $files) {
         }
 
         arsort($ranking);
+        $sum = array_sum(array_values($ranking));
         $avgFrequency = count($ranking)
-            ? array_sum(array_values($ranking))/count($ranking)
+            ? $sum/count($ranking)
             : 0;
 
         $keywordsQuery = array();
         foreach ($ranking as $entity => $frequency) {
             if ($frequency > $avgFrequency) {
-                $keywordsQuery[] = sprintf('\b%s\b;%d', $entity, $frequency);
+                $keywordsQuery[] = sprintf('\b%s\b;%.2f', $entity, $frequency/$sum);
             }
         }
 
