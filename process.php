@@ -1,6 +1,7 @@
 <?php
 
 $subject = isset($argv[1]) ? $argv[1] : null;
+$mode = isset($argv[2]) ? $argv[2] : 'default';
 
 if (is_dir($subject)) {
     if ($handle = opendir($subject)) {
@@ -14,17 +15,17 @@ if (is_dir($subject)) {
 
         closedir($handle);
 
-        process($subject, $files);
+        process($subject, $files, $mode);
     }
 } elseif (is_file($subject)) {
     $files = array($subject);
 
-    process(realpath(dirname($subject)), $files);
+    process(realpath(dirname($subject)), $files, $mode);
 } else {
     throw new RuntimeException('Input not found :(');
 }
 
-function process($directory, array $files) {
+function process($directory, array $files, $mode) {
     $oldmask = umask(0);
 
     $clusterName = strtoupper(basename($directory)).'_CLUSTER';
@@ -48,38 +49,46 @@ function process($directory, array $files) {
         $wcrftCommand = 'wcrft-app nkjp.ini -i text -o ccl %s/%s -O %s/ccl/%s';
         shell_exec(sprintf($wcrftCommand, $directory, $file, $clusterDir, $xml));
 
-        //NER
-        $linerCommand = "liner2 pipe -i ccl -o ccl -f %s/ccl/%s -t %s/ccl/%s.ner";
-        shell_exec(sprintf($linerCommand, $clusterDir, $xml, $clusterDir, $xml));
+        if ($mode == 'ner') {
+            $linerCommand = "liner2 pipe -i ccl -o ccl -f %s/ccl/%s -t %s/ccl/%s.ner";
+            shell_exec(sprintf($linerCommand, $clusterDir, $xml, $clusterDir, $xml));
 
-        $xmlTemplate = '<?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE chunkList SYSTEM "ccl.dtd">
-        <chunkList>%s</chunkList>';
+            $xmlTemplate = '<?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE chunkList SYSTEM "ccl.dtd">
+            <chunkList>%s</chunkList>';
 
-        $ner = new SimpleXMLElement(sprintf($xmlTemplate, file_get_contents($clusterDir.'/ccl/'.$xml.'.ner')));
-        $namedEntitiesIndexes = array();
-        $tokenIndex = 0;
+            $nerFile = file_get_contents($clusterDir.'/ccl/'.$xml.'.ner');
 
-        foreach ($ner as $paragraph) {
-            foreach ($paragraph as $sentence) {
-                foreach ($sentence as $tok) {
-                    $base = (string)$tok->lex->base;
+            if (stristr($nerFile, '?xml')) {
+                $ner = new SimpleXMLElement($nerFile);
+            } else {
+                $ner = new SimpleXMLElement(sprintf($xmlTemplate, $nerFile));
+            }
 
-                    if ((string)$tok->lex->ctag == 'interp') {
-                        continue;
-                    }
+            $namedEntitiesIndexes = array();
+            $tokenIndex = 0;
 
-                    if (trim($base) == '') {
-                        continue;
-                    }
+            foreach ($ner as $paragraph) {
+                foreach ($paragraph as $sentence) {
+                    foreach ($sentence as $tok) {
+                        $base = (string)$tok->lex->base;
 
-                    foreach ($tok->ann as $ann) {
-                        if ((string)$ann == '1') {
-                            $namedEntitiesIndexes[] = $tokenIndex;
+                        if ((string)$tok->lex->ctag == 'interp') {
+                            continue;
                         }
-                    }
 
-                    $tokenIndex++;
+                        if (trim($base) == '') {
+                            continue;
+                        }
+
+                        foreach ($tok->ann as $ann) {
+                            if ((string)$ann == '1') {
+                                $namedEntitiesIndexes[] = $tokenIndex;
+                            }
+                        }
+
+                        $tokenIndex++;
+                    }
                 }
             }
         }
@@ -101,11 +110,11 @@ function process($directory, array $files) {
                         continue;
                     }
 
-                    if (trim($base) == '') {
+                    if (trim($base) == '' || strlen(trim($base)) < 2) {
                         continue;
                     }
 
-                    if (in_array($tokenIndex, $namedEntitiesIndexes)) {
+                    if ($mode == 'ner' && in_array($tokenIndex, $namedEntitiesIndexes)) {
                         $namedEntities[] = $base;
                     }
 
@@ -119,41 +128,43 @@ function process($directory, array $files) {
             }
         }
 
-        $ranking = array();
-        foreach ($namedEntities as $n) {
-            if (!isset($ranking[$n])) {
-                $ranking[$n] = 0;
+        if ($mode == 'ner') {
+            $ranking = array();
+            foreach ($namedEntities as $n) {
+                if (!isset($ranking[$n])) {
+                    $ranking[$n] = 0;
+                }
+
+                $ranking[$n]++;
             }
 
-            $ranking[$n]++;
-        }
+            arsort($ranking);
+            $sum = array_sum(array_values($ranking));
+            $avgFrequency = count($ranking)
+                ? $sum/count($ranking)
+                : 0;
 
-        arsort($ranking);
-        $sum = array_sum(array_values($ranking));
-        $avgFrequency = count($ranking)
-            ? $sum/count($ranking)
-            : 0;
-
-        $keywordsQuery = array();
-        foreach ($ranking as $entity => $frequency) {
-            if ($frequency > $avgFrequency) {
-                $keywordsQuery[] = sprintf('\b%s\b;%.2f', $entity, $frequency/$sum);
+            $keywordsQuery = array();
+            foreach ($ranking as $entity => $frequency) {
+                if ($frequency > $avgFrequency) {
+                    $keywordsQuery[] = sprintf('\b%s\b;%.2f', $entity, $frequency/$sum);
+                }
             }
+
+            $keywordsConfig = new SimpleXMLElement('<QUERY QID="KF" QNO="1" TRANSLATED="NO"></QUERY>');
+            $keywordsConfig->addChild('TITLE');
+            $keywordsConfig->addChild('NARRATIVE');
+            $keywordsConfig->addChild('DESCRIPTION');
+            $keywordsConfig->addChild('KEYWORDS', implode(';', $keywordsQuery));
+
+            $dom = new DOMDocument('1.0', 'utf-8');
+            $dom->preserveWhiteSpace = false;
+            $dom->formatOutput = true;
+            $dom->loadXML($keywordsConfig->asXML());
+
+            $keywordsConfigPath = $clusterDir.'/'.$clusterName.'.keywords';
+            file_put_contents($keywordsConfigPath, $dom->saveXML());
         }
-
-        $keywordsConfig = new SimpleXMLElement('<QUERY QID="KF" QNO="1" TRANSLATED="NO"></QUERY>');
-        $keywordsConfig->addChild('TITLE');
-        $keywordsConfig->addChild('NARRATIVE');
-        $keywordsConfig->addChild('DESCRIPTION');
-        $keywordsConfig->addChild('KEYWORDS', implode(';', $keywordsQuery));
-
-        $dom = new DOMDocument('1.0', 'utf-8');
-        $dom->preserveWhiteSpace = false;
-        $dom->formatOutput = true;
-        $dom->loadXML($keywordsConfig->asXML());
-
-        $keywordsConfigPath = $clusterDir.'/'.$clusterName.'.keywords';
-        file_put_contents($keywordsConfigPath, $dom->saveXML());
 
         writeDocsent($processedSentences, $clusterDir.'/docsent', strtoupper($fileName));
         writeDocsent($originalSentences, $clusterDir.'/docsent', strtoupper($fileName), true);
@@ -175,9 +186,18 @@ function process($directory, array $files) {
 
     $extractPath = $clusterDir.'/'.$clusterName.'.extract';
 
-    $keywordsParams = '-feature QueryPhraseMatch "/usr/local/share/mead/bin/feature-scripts/keyword/QueryPhraseMatch.pl '.$keywordsConfigPath.' '.$clusterDir.'/docsent"';
-    $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl Centroid 1 Position 1 Length 9 QueryPhraseMatch 1"';
-    shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$keywordsParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
+    if ($mode == 'ner') {
+        $keywordsParams = '-feature QueryPhraseMatch "/usr/local/share/mead/bin/feature-scripts/keyword/QueryPhraseMatch.pl '.$keywordsConfigPath.' '.$clusterDir.'/docsent"';
+        $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl Centroid 1 Position 1 Length 9 QueryPhraseMatch 2"';
+        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$keywordsParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
+    } elseif ($mode == 'lr') {
+        $lexRankParams = '-feature LexRank "/usr/local/share/mead/bin/feature-scripts/lexrank/LexRank.pl"';
+        $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl LexRank 1"';
+        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$lexRankParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
+    } else {
+        $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl Centroid 1 Position 1 Length 9"';
+        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
+    }
 
     umask($oldmask);
 
