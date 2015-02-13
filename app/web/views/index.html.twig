@@ -2,16 +2,47 @@
 {% block body %}
 <div class="container">
   <div class="row">
-    <form role="form" method="POST">
+    <form id="main_form" role="form" class="form-horizontal" method="POST">
       <div class="col-md-6">
         <h2>Tekst</h2>
         <textarea name="text" id="text" style="width:100%;height:600px">{% if text is defined %}{{ text }}{% endif %}</textarea>
-        <p>&nbsp;</p>
+        <h3>Ustawienia</h3>
+        <div class="form-group">
+          <label class="col-sm-6 control-label">Tryb:</label>
+          <div class="col-sm-6">
+            <p class="form-control-static">
+              <select class="form-control" name="extract_mode" id="extract_mode">
+                <option value="default">podstawowy</option>
+                <option value="ner">nazwy własne</option>
+                <option value="lr">LexRank</option>
+              </select>
+            </p>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="col-sm-6 control-label">Streszczenie ma zawierać:</label>
+          <div class="col-sm-6">
+            <p class="form-control-static">
+              <input type="number" name="extract_length" id="extract_length" class="form-control" value="20">
+              <select class="form-control" name="extract_denomination" id="extract_denomination">
+                <option value="percent">procent</option>
+                <option value="absolute">sztuk</option>
+              </select>
+              <select class="form-control" name="extract_base">
+                <option value="sentences">zdań</option>
+                <option value="word">słów</option>
+              </select>
+              z oryginalnego tekstu.
+            </p>
+          </div>
+        </div>
+
         <button type="submit" id="extract-btn" class="btn btn-primary">Generuj streszczenie</button>
       </div>
       <div class="col-md-6">
         {% if extract is defined %}
         <h2>Streszczenie</h2>
+        <p>{{ extract_spec }}</p>
         <table class="table">
           {% for sentence in extract %}
           <tr class="success"><td>{{ sentence }}</td></tr>
@@ -28,6 +59,24 @@ $(document).ready(function () {
 
     $('#text').on('change keyup paste', function () {
         $('#extract-btn').prop('disabled', $('#text').val() == '');
+    });
+
+    $("#main_form").submit(function(event) {
+      var extractLength = parseInt($('#extract_length').val());
+      var denomination = $("#extract_denomination").val();
+
+      if (denomination == "percent") {
+          if (extractLength < 1 || extractLength >= 100) {
+              alert("Długość streszczenia musi wynosić 1-99%");
+              event.preventDefault();
+          }
+      } else {
+          if (extractLength < 1) {
+              alert("Nieprawidłowa długość streszczenia");
+              event.preventDefault();
+          }
+      }
+
     });
 });
 </script>

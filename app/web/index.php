@@ -32,6 +32,11 @@ $app->match('/', function(Request $request) use ($app) {
     if ($request->isMethod('POST')) {
         $text = $request->request->get('text');
 
+        $extractMode = $request->request->get('extract_mode');
+        $extractLength = $request->request->get('extract_length');
+        $extractDenomination = $request->request->get('extract_denomination');
+        $extractBase = $request->request->get('extract_base');
+
         $oldmask = umask(0);
 
         $workingDirPath = '/tmp/xtr';
@@ -54,7 +59,15 @@ $app->match('/', function(Request $request) use ($app) {
 
         file_put_contents($clusterDirPath.'/TEXT1.txt', $text);
 
-        $cmd = sprintf('php %s %s', $scriptPath, $clusterDirPath);
+        $cmd = sprintf(
+            'php %s %s -mode %s -%s -%s %s',
+            $scriptPath,
+            $clusterDirPath,
+            $extractMode,
+            ($extractBase == 'sentence' ? 's' : 'w'),
+            ($extractDenomination == 'percent' ? 'p' : 'a'),
+            $extractLength
+        );
 
         shell_exec($cmd);
 
@@ -75,7 +88,21 @@ $app->match('/', function(Request $request) use ($app) {
             }
         }
 
-        return $app['twig']->render('index.html.twig', array('text' => $text, 'extract' => $extract));
+        $modes = array(
+            'default' => 'domyślny',
+            'ner' => 'nazwy własne',
+            'lr' => 'LexRank',
+        );
+
+        $extractSpec = array();
+        $extractSpec[] = $extractLength.($extractDenomination == 'percent' ? '%' : '').' '.($extractBase == 'sentences' ? 'zdań' : 'słów');
+        $extractSpec[] = 'tryb: '.$modes[$extractMode];
+
+        return $app['twig']->render('index.html.twig', array(
+            'text' => $text,
+            'extract' => $extract,
+            'extract_spec' => implode(', ', $extractSpec),
+        ));
     }
 
     return $app['twig']->render('index.html.twig');

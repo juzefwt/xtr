@@ -1,7 +1,29 @@
 <?php
 
 $subject = isset($argv[1]) ? $argv[1] : null;
-$mode = isset($argv[2]) ? $argv[2] : 'default';
+
+$mode = 'default';
+$length = 20;
+$denomination = 'percent';
+$base = 'sentences';
+
+foreach ($argv as $i => $param) {
+    if ($param == '-mode') {
+        $mode = $argv[$i+1];
+    }
+
+    if ($param == '-w') {
+        $base = 'words';
+    }
+
+    if ($param == '-a') {
+        $denomination = 'absolute';
+    }
+
+    if ($param == '-a' || $param == '-p') {
+        $length = $argv[$i+1];
+    }
+}
 
 if (is_dir($subject)) {
     if ($handle = opendir($subject)) {
@@ -15,17 +37,17 @@ if (is_dir($subject)) {
 
         closedir($handle);
 
-        process($subject, $files, $mode);
+        process($subject, $files, $mode, $length, $denomination, $base);
     }
 } elseif (is_file($subject)) {
     $files = array($subject);
 
-    process(realpath(dirname($subject)), $files, $mode);
+    process(realpath(dirname($subject)), $files, $mode, $length, $denomination, $base);
 } else {
     throw new RuntimeException('Input not found :(');
 }
 
-function process($directory, array $files, $mode) {
+function process($directory, array $files, $mode, $length, $denomination, $base) {
     $oldmask = umask(0);
 
     $clusterName = strtoupper(basename($directory)).'_CLUSTER';
@@ -69,6 +91,10 @@ function process($directory, array $files, $mode) {
             $tokenIndex = 0;
 
             foreach ($ner as $paragraph) {
+                if ($paragraph['id'] != 'ch1' && $paragraph['id'] != 'ch2') {
+                    continue;
+                }
+
                 foreach ($paragraph as $sentence) {
                     foreach ($sentence as $tok) {
                         $base = (string)$tok->lex->base;
@@ -146,9 +172,7 @@ function process($directory, array $files, $mode) {
 
             $keywordsQuery = array();
             foreach ($ranking as $entity => $frequency) {
-                if ($frequency > $avgFrequency) {
-                    $keywordsQuery[] = sprintf('\b%s\b;%.2f', $entity, $frequency/$sum);
-                }
+                $keywordsQuery[] = sprintf('\b%s\b;%.2f', $entity, $frequency/$sum);
             }
 
             $keywordsConfig = new SimpleXMLElement('<QUERY QID="KF" QNO="1" TRANSLATED="NO"></QUERY>');
@@ -186,17 +210,24 @@ function process($directory, array $files, $mode) {
 
     $extractPath = $clusterDir.'/'.$clusterName.'.extract';
 
+    $lengthParams = sprintf(
+      '-%s -%s %s',
+      ($base == 'sentences' ? 's' : 'w'),
+      ($denomination == 'percent' ? 'p' : 'a'),
+      $length
+    );
+
     if ($mode == 'ner') {
         $keywordsParams = '-feature QueryPhraseMatch "/usr/local/share/mead/bin/feature-scripts/keyword/QueryPhraseMatch.pl '.$keywordsConfigPath.' '.$clusterDir.'/docsent"';
         $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl Centroid 1 Position 1 Length 9 QueryPhraseMatch 2"';
-        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$keywordsParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
+        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl'.$lengthParams.' '.$keywordsParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
     } elseif ($mode == 'lr') {
         $lexRankParams = '-feature LexRank "/usr/local/share/mead/bin/feature-scripts/lexrank/LexRank.pl"';
-        $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl LexRank 1"';
-        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$lexRankParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
+        $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl  Position 1 Length 9 LexRank 2"';
+        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$lengthParams.' '.$lexRankParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
     } else {
         $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl Centroid 1 Position 1 Length 9"';
-        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
+        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$lengthParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
     }
 
     umask($oldmask);
