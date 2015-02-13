@@ -47,7 +47,7 @@ if (is_dir($subject)) {
     throw new RuntimeException('Input not found :(');
 }
 
-function process($directory, array $files, $mode, $length, $denomination, $base) {
+function process($directory, array $files, $mode, $length, $denomination, $extractBase) {
     $oldmask = umask(0);
 
     $clusterName = strtoupper(basename($directory)).'_CLUSTER';
@@ -212,7 +212,7 @@ function process($directory, array $files, $mode, $length, $denomination, $base)
 
     $lengthParams = sprintf(
       '-%s -%s %s',
-      ($base == 'sentences' ? 's' : 'w'),
+      ($extractBase == 'sentences' ? 's' : 'w'),
       ($denomination == 'percent' ? 'p' : 'a'),
       $length
     );
@@ -220,7 +220,7 @@ function process($directory, array $files, $mode, $length, $denomination, $base)
     if ($mode == 'ner') {
         $keywordsParams = '-feature QueryPhraseMatch "/usr/local/share/mead/bin/feature-scripts/keyword/QueryPhraseMatch.pl '.$keywordsConfigPath.' '.$clusterDir.'/docsent"';
         $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl Centroid 1 Position 1 Length 9 QueryPhraseMatch 2"';
-        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl'.$lengthParams.' '.$keywordsParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
+        shell_exec('perl -Mutf8 -CS /usr/local/share/mead/bin/mead.pl '.$lengthParams.' '.$keywordsParams.' '.$classifierParams.' -extract -output '.$extractPath.' '.$clusterDir);
     } elseif ($mode == 'lr') {
         $lexRankParams = '-feature LexRank "/usr/local/share/mead/bin/feature-scripts/lexrank/LexRank.pl"';
         $classifierParams = '-classifier "/usr/local/share/mead/bin/default-classifier.pl  Position 1 Length 9 LexRank 2"';
