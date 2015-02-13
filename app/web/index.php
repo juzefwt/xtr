@@ -64,7 +64,7 @@ $app->match('/', function(Request $request) use ($app) {
             $scriptPath,
             $clusterDirPath,
             $extractMode,
-            ($extractBase == 'sentence' ? 's' : 'w'),
+            ($extractBase == 'sentences' ? 's' : 'w'),
             ($extractDenomination == 'percent' ? 'p' : 'a'),
             $extractLength
         );
